@@ -43,7 +43,7 @@ export const defaultConfig: Config = {
   postgresBinPath: "/usr/lib/postgresql/17/bin",
   postgresService: "postgresql",
 
-  clonePortStart: 6000,
+  clonePortStart: 6001,
   clonePortEnd: 6099,
   cloneAccessHost: "127.0.0.1",
   maxClones: 10,

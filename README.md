@@ -18,8 +18,13 @@ ZVPG (ZFS Versioned PostgreSQL Engine) revolutionizes database development and t
 -   **Zero-Cost Clones:** Spin up multiple, fully-functional, writeable PostgreSQL instances from any snapshot, instantly. Clones are copy-on-write, meaning they only store the differences, saving immense disk space.
 -   **Git-like Branching:** Manage different database states with a familiar branching model. Create a branch, make schema changes, test, and then merge or discard your work.
 -   **Complete Isolation:** Every clone runs as an independent PostgreSQL instance on its own port, ensuring no interference between development, testing, and production environments.
--   **Command-Line Interface:** A powerful and intuitive CLI (`zvpg`) to manage all your snapshots, clones, and branches.
--   **Simple Configuration:** A single JSON file to configure all aspects of the engine.
+-   **Comprehensive CLI:** A powerful and intuitive command-line interface with subcommands for all operations:
+    - `zvpg init` - Environment initialization and health checking
+    - `zvpg snapshot` / `zvpg commit` - Snapshot/commit management
+    - `zvpg clone` - Clone lifecycle management
+    - `zvpg branch` - Git-like branch operations
+    - `zvpg status` - System monitoring and health checks
+-   **Flexible Configuration:** JSON-based configuration with sensible defaults and extensive customization options.
 
 ## Architecture
 
@@ -71,20 +76,22 @@ Before you begin, ensure you have the following dependencies installed and confi
 Once installed, you need to initialize ZVPG. This command will set up the necessary ZFS datasets for storing the main PostgreSQL data, snapshots, and clones.
 
 ```bash
-# This will create a ZFS pool named 'zvpg_pool' and set up its mount directory
-sudo zvpg init --zfs-pool <your_zfs_pool_name> --mount-dir /var/lib/zvpg
+# Initialize the ZVPG environment
+zvpg init env
+
+# Check if the environment is properly initialized
+zvpg init check
 ```
 
 ## Usage
 
 ZVPG provides a simple yet powerful set of commands to manage your database versions.
 
-### Snapshots (Commit)
+### Snapshots
 
 `zvpg commit` is an alias of `zvpg snapshot`
 
 Snapshots are the foundation of ZVPG. They are immutable, point-in-time images of your database.
-
 
 -   **Create a snapshot:**
     ```bash
@@ -96,9 +103,38 @@ Snapshots are the foundation of ZVPG. They are immutable, point-in-time images o
     zvpg snapshot list
     ```
 
+-   **Get snapshot information:**
+    ```bash
+    zvpg snapshot info my_first_snapshot
+    ```
+
 -   **Delete a snapshot:**
     ```bash
     zvpg snapshot delete my_first_snapshot
+    ```
+
+### Commits
+
+Commits are an alias for snapshots, providing a Git-like interface.
+
+-   **Create a commit:**
+    ```bash
+    zvpg commit create my_commit -m "Add user authentication"
+    ```
+
+-   **List all commits:**
+    ```bash
+    zvpg commit list
+    ```
+
+-   **Show commit information:**
+    ```bash
+    zvpg commit show my_commit
+    ```
+
+-   **Remove a commit:**
+    ```bash
+    zvpg commit remove my_commit
     ```
 
 ### Clones
@@ -107,8 +143,7 @@ Clones are writeable copies of snapshots. This is where you do your work.
 
 -   **Create a clone from a snapshot:**
     ```bash
-    # ZVPG will automatically assign the next available port
-    zvpg clone create my_first_snapshot --name "feature_x_testing"
+    zvpg clone create my_first_snapshot my_clone --port 5433
     ```
 
 -   **List all active clones:**
@@ -116,29 +151,44 @@ Clones are writeable copies of snapshots. This is where you do your work.
     zvpg clone list
     ```
 
+-   **Get clone information:**
+    ```bash
+    zvpg clone info my_clone
+    ```
+
 -   **Start/Stop a clone's PostgreSQL instance:**
     ```bash
-    zvpg clone start --port 6001
-    zvpg clone stop --port 6001
+    zvpg clone start my_clone
+    zvpg clone stop my_clone
     ```
 
 -   **Connect to a clone:**
     ```bash
-    psql -p 6001 -U <your_user> <your_db>
+    psql -p 5433 -U <your_user> <your_db>
     ```
 
 -   **Delete a clone:**
     ```bash
-    zvpg clone delete --port 6001
+    zvpg clone delete my_clone
     ```
 
 ### Branches
 
-Branches provide a higher-level abstraction for managing development workflows, similar to Git.
+Branches provide a higher-level abstraction for managing development workflows, similar to Git. They use the dedicated ZFS-based branch system.
 
--   **Create a branch:**
+-   **Create a branch from current state (latest snapshot):**
     ```bash
-    zvpg branch create feature/new-api --parent main
+    zvpg branch create feature/new-api
+    ```
+
+-   **Create a branch from a specific snapshot:**
+    ```bash
+    zvpg branch create feature/new-api --from my_snapshot
+    ```
+
+-   **Create a branch with a specific parent:**
+    ```bash
+    zvpg branch create feature/new-api --parent development
     ```
 
 -   **List branches:**
@@ -146,18 +196,44 @@ Branches provide a higher-level abstraction for managing development workflows, 
     zvpg branch list
     ```
 
--   **Create a snapshot on a branch:**
+-   **Get branch information:**
     ```bash
-    zvpg branch snapshot feature/new-api migration_v2 -m "Add user table"
+    zvpg branch info feature/new-api
+    ```
+
+-   **Create a snapshot from a branch:**
+    ```bash
+    zvpg branch snapshot feature/new-api milestone-1 -m "First milestone completed"
+    ```
+
+-   **Delete a branch:**
+    ```bash
+    zvpg branch delete feature/new-api
     ```
 
 ### Status
 
 Get a comprehensive overview of the entire system.
 
-```bash
-zvpg status
-```
+-   **Show complete system status:**
+    ```bash
+    zvpg status system
+    ```
+
+-   **Show detailed clones status:**
+    ```bash
+    zvpg status clones
+    ```
+
+-   **Show detailed snapshots status:**
+    ```bash
+    zvpg status snapshots
+    ```
+
+-   **Perform system health check:**
+    ```bash
+    zvpg status health
+    ```
 
 ## Configuration
 
@@ -169,6 +245,143 @@ Key configuration options include:
 -   `mountDir`: The base directory where ZFS datasets are mounted.
 -   `clonePortStart` / `clonePortEnd`: The range of network ports to use for clones.
 -   `logLevel`: The logging verbosity.
+
+## Command Reference
+
+### Initialize Commands
+```bash
+zvpg init env [options]              # Initialize the ZVPG environment
+zvpg init check [options]            # Check environment initialization status
+```
+
+### Snapshot Commands
+```bash
+zvpg snapshot create <name> [options]    # Create a new snapshot
+zvpg snapshot list [options]             # List all snapshots
+zvpg snapshot info <name> [options]      # Show snapshot information
+zvpg snapshot delete <name> [options]    # Delete a snapshot
+```
+
+### Commit Commands (Snapshot Aliases)
+```bash
+zvpg commit create <name> [options]      # Create a new commit
+zvpg commit list [options]               # List all commits
+zvpg commit show <name> [options]        # Show commit information
+zvpg commit remove <name> [options]      # Remove a commit
+```
+
+### Clone Commands
+```bash
+zvpg clone create <snapshot> <name> [options]  # Create a clone from snapshot
+zvpg clone list [options]                      # List all clones
+zvpg clone info <name> [options]               # Show clone information
+zvpg clone start <name> [options]              # Start clone PostgreSQL instance
+zvpg clone stop <name> [options]               # Stop clone PostgreSQL instance
+zvpg clone delete <name> [options]             # Delete a clone
+```
+
+### Branch Commands
+```bash
+zvpg branch create <name> [options]          # Create a new branch
+zvpg branch list [options]                   # List all branches
+zvpg branch info <name> [options]            # Show branch information
+zvpg branch delete <name> [options]          # Delete a branch
+zvpg branch snapshot <branch> <snapshot> [options]  # Create snapshot from branch
+```
+
+### Status Commands
+```bash
+zvpg status system [options]             # Show complete system status
+zvpg status clones [options]             # Show detailed clones status
+zvpg status snapshots [options]          # Show detailed snapshots status
+zvpg status health [options]             # Perform system health check
+```
+
+### Common Options
+- `-c, --config <config>`: Configuration file path
+- `-f, --format <format>`: Output format (table|json) for list commands
+- `-m, --message <message>`: Message for snapshot/commit creation
+- `-p, --port <port>`: Port number for clones
+- `--from <snapshot>`: Create branch from specific snapshot
+- `--parent <parent>`: Parent branch name (default: main)
+- `--force`: Force operations (where applicable)
+
+## Workflow Examples
+
+### Basic Development Workflow
+
+1. **Initialize the environment:**
+   ```bash
+   zvpg init env
+   ```
+
+2. **Create a snapshot of your current database:**
+   ```bash
+   zvpg snapshot create baseline -m "Initial production state"
+   ```
+
+3. **Create a development branch:**
+   ```bash
+   zvpg branch create feature/user-auth --from baseline
+   ```
+
+4. **Work on your branch (the branch provides a ZFS dataset):**
+   ```bash
+   # Access the branch data at the mount point
+   # Or create a clone from the branch for PostgreSQL access
+   zvpg clone create feature/user-auth test-clone --port 5434
+   ```
+
+5. **Create a snapshot from your branch:**
+   ```bash
+   zvpg branch snapshot feature/user-auth milestone-1 -m "User authentication milestone"
+   ```
+
+6. **Clean up when no longer needed:**
+   ```bash
+   zvpg branch delete feature/user-auth
+   ```
+
+### Testing Workflow
+
+1. **Create a clone for testing:**
+   ```bash
+   zvpg clone create baseline test-env --port 5435
+   ```
+
+2. **Run your tests against the clone:**
+   ```bash
+   # Your tests connect to port 5435
+   npm test -- --db-port=5435
+   ```
+
+3. **Reset the test environment:**
+   ```bash
+   zvpg clone delete test-env
+   zvpg clone create baseline test-env --port 5435
+   ```
+
+### Monitoring and Maintenance
+
+1. **Check system status:**
+   ```bash
+   zvpg status system
+   ```
+
+2. **Monitor clones:**
+   ```bash
+   zvpg status clones
+   ```
+
+3. **Check snapshots usage:**
+   ```bash
+   zvpg status snapshots
+   ```
+
+4. **Perform health check:**
+   ```bash
+   zvpg status health
+   ```
 
 ## Contributing
 

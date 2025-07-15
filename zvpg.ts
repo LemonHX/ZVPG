@@ -6,18 +6,28 @@ import { version } from "./version.ts";
 import { initCommand } from "./commands/init.ts";
 import { statusCommand } from "./commands/status.ts";
 import { snapshotCommand } from "./commands/snapshot.ts";
+import { commitCommand } from "./commands/commit.ts";
 import { cloneCommand } from "./commands/clone.ts";
 import { branchCommand } from "./commands/branch.ts";
+
+const logo = await Deno.readTextFile(
+  new URL("logo_output.txt", import.meta.url),
+);
+
+console.log("\n\n" + logo);
 
 const cli = new Command()
   .name("zvpg")
   .version(version)
   .description("ZFS Verioned PostgreSQL Engine - PostgreSQL Clone Management")
+  .action(function () {
+    this.showHelp();
+  })
   .command("init", initCommand)
-  .command("status", statusCommand)
-  .command("commit", snapshotCommand)
-  .command("snapshot", snapshotCommand)
+  .command("commit", commitCommand)
+  .command("branch", branchCommand)
   .command("clone", cloneCommand)
-  .command("branch", branchCommand);
+  .command("status", statusCommand)
+  .command("snapshot", snapshotCommand);
 
 await cli.parse(Deno.args);

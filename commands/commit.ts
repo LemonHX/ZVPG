@@ -1,4 +1,4 @@
-// ZFS Verioned PostgreSQL Engine - Snapshot Command
+// ZFS Versioned PostgreSQL Engine - Commit Command (Alias for Snapshot)
 
 import { Command } from "@cliffy/command";
 import {
@@ -8,11 +8,11 @@ import {
   listAction,
 } from "./snapshot-helper.ts";
 
-const createSnapshotCommand = new Command()
-  .description("Create a new snapshot")
+const createCommitCommand = new Command()
+  .description("Create a new commit (snapshot)")
   .arguments("<name:string>")
-  .option("-m, --message <message>", "Snapshot message", {
-    default: "Manual snapshot",
+  .option("-m, --message <message>", "Commit message", {
+    default: "Manual commit",
   })
   .option("-c, --config <config>", "Configuration file path")
   .action(
@@ -21,10 +21,10 @@ const createSnapshotCommand = new Command()
     },
   );
 
-const deleteSnapshotCommand = new Command()
-  .description("Delete a snapshot")
+const removeCommitCommand = new Command()
+  .description("Remove a commit (snapshot)")
   .arguments("<name:string>")
-  .option("-f, --force", "Force deletion")
+  .option("-f, --force", "Force removal")
   .option("-c, --config <config>", "Configuration file path")
   .action(
     async (options: { force?: boolean; config?: string }, name: string) => {
@@ -32,30 +32,30 @@ const deleteSnapshotCommand = new Command()
     },
   );
 
-const listSnapshotsCommand = new Command()
-  .description("List snapshots")
+const listCommitsCommand = new Command()
+  .description("List commits (snapshots)")
   .option("-f, --format <format>", "Output format (table|json)", {
     default: "table",
   })
   .option("-c, --config <config>", "Configuration file path")
   .action(async (options: { format: string; config?: string }) => {
-    await listAction(options, "snapshots");
+    await listAction(options, "commits");
   });
 
-const snapshotInfoCommand = new Command()
-  .description("Show snapshot information")
+const showCommitCommand = new Command()
+  .description("Show commit (snapshot) information")
   .arguments("<name:string>")
   .option("-c, --config <config>", "Configuration file path")
   .action(async (options: { config?: string }, name: string) => {
-    await infoAction(name, options, "Snapshot");
+    await infoAction(name, options, "Commit");
   });
 
-export const snapshotCommand = new Command()
-  .description("Manage snapshots")
+export const commitCommand = new Command()
+  .description("Manage commits (snapshots)")
   .action(function () {
     this.showHelp();
   })
-  .command("create", createSnapshotCommand)
-  .command("delete", deleteSnapshotCommand)
-  .command("list", listSnapshotsCommand)
-  .command("info", snapshotInfoCommand);
+  .command("create", createCommitCommand)
+  .command("remove", removeCommitCommand)
+  .command("list", listCommitsCommand)
+  .command("show", showCommitCommand);

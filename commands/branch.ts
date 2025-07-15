@@ -1,36 +1,30 @@
-// ZFS Verioned PostgreSQL Engine - Branch Command
+// ZFS Versioned PostgreSQL Engine - Branch Command
 
 import { Command } from "@cliffy/command";
 import { Table } from "@cliffy/table";
-import { BranchService } from "../services/branch.ts";
-import { loadConfig } from "../config.ts";
 import { log } from "../utils.ts";
-
-const branchService = new BranchService();
+import { loadConfig } from "../config.ts";
+import { BranchService } from "../services/branch.ts";
 
 const createBranchCommand = new Command()
-  .description("Create a new branch")
+  .description("Create a new branch from current state or snapshot")
   .arguments("<name:string>")
-  .option("-s, --snapshot <snapshot>", "Parent snapshot")
-  .option("-p, --parent <parent>", "Parent branch", { default: "main" })
+  .option("-f, --from <snapshot>", "Create branch from specific snapshot")
+  .option("-p, --parent <parent>", "Parent branch name", { default: "main" })
   .option("-c, --config <config>", "Configuration file path")
   .action(
     async (
-      options: { snapshot?: string; parent: string; config?: string },
+      options: { from?: string; parent: string; config?: string },
       name: string,
     ) => {
+      await loadConfig(options.config);
+      const branchService = new BranchService();
+
       try {
-        await loadConfig(options.config);
-        await branchService.createBranch(
-          name,
-          options.snapshot,
-          options.parent,
-        );
+        await branchService.createBranch(name, options.from, options.parent);
+        log.success(`Branch '${name}' created successfully`);
       } catch (error) {
-        const errorMessage = error instanceof Error
-          ? error.message
-          : String(error);
-        log.error(errorMessage);
+        log.error(error instanceof Error ? error.message : String(error));
         Deno.exit(1);
       }
     },
@@ -43,74 +37,62 @@ const deleteBranchCommand = new Command()
   .option("-c, --config <config>", "Configuration file path")
   .action(
     async (options: { force?: boolean; config?: string }, name: string) => {
+      await loadConfig(options.config);
+      const branchService = new BranchService();
+
       try {
-        await loadConfig(options.config);
-        await branchService.deleteBranch(name, options.force);
+        await branchService.deleteBranch(name, options.force || false);
+        log.success(`Branch '${name}' deleted successfully`);
       } catch (error) {
-        const errorMessage = error instanceof Error
-          ? error.message
-          : String(error);
-        log.error(errorMessage);
+        log.error(error instanceof Error ? error.message : String(error));
         Deno.exit(1);
       }
     },
   );
 
 const listBranchesCommand = new Command()
-  .description("List branches")
+  .description("List all branches")
   .option("-f, --format <format>", "Output format (table|json)", {
     default: "table",
   })
   .option("-c, --config <config>", "Configuration file path")
   .action(async (options: { format: string; config?: string }) => {
+    await loadConfig(options.config);
+    const branchService = new BranchService();
+
     try {
-      await loadConfig(options.config);
       const branches = await branchService.listBranches();
 
-      if (branches.length === 0) {
-        log.warn("No branches found");
-        return;
-      }
-
       if (options.format === "json") {
-        const branchData = branches.map((branch) => ({
-          name: branch.name,
-          parent_branch: branch.parentBranch,
-          parent_snapshot: branch.parentSnapshot,
-          created: branch.created,
-          used: branch.used,
-          available: branch.available,
-          referenced: branch.referenced,
-          clone_count: branch.clones.length,
-        }));
-
-        console.log(JSON.stringify(branchData, null, 2));
+        console.log(JSON.stringify(branches, null, 2));
       } else {
-        const table = new Table()
-          .header(["Branch", "Parent", "Parent Snapshot", "Created", "Clones"])
-          .border(true);
-
-        for (const branch of branches) {
-          // 只显示快照名称部分
-          const shortSnapshot = branch.parentSnapshot.split("@")[1] ||
-            branch.parentSnapshot;
-
-          table.push([
-            branch.name,
-            branch.parentBranch,
-            shortSnapshot,
-            branch.created,
-            branch.clones.length.toString(),
-          ]);
+        if (branches.length === 0) {
+          log.info("No branches found");
+          return;
         }
 
-        table.render();
+        const table = new Table()
+          .header([
+            "Name",
+            "Parent Branch",
+            "Parent Snapshot",
+            "Used",
+            "Created",
+          ])
+          .body(
+            branches.map((branch) => [
+              branch.name,
+              branch.parentBranch,
+              branch.parentSnapshot.split("@")[1] || branch.parentSnapshot,
+              branch.used,
+              branch.created,
+            ]),
+          );
+
+        console.log(table.toString());
       }
     } catch (error) {
-      const errorMessage = error instanceof Error
-        ? error.message
-        : String(error);
-      log.error(errorMessage);
+      log.error(error instanceof Error ? error.message : String(error));
       Deno.exit(1);
     }
   });
@@ -120,39 +102,37 @@ const branchInfoCommand = new Command()
   .arguments("<name:string>")
   .option("-c, --config <config>", "Configuration file path")
   .action(async (options: { config?: string }, name: string) => {
+    await loadConfig(options.config);
+    const branchService = new BranchService();
+
     try {
-      await loadConfig(options.config);
-      const branch = await branchService.getBranchInfo(name);
+      const info = await branchService.getBranchInfo(name);
 
-      console.log("Branch Information:");
-      console.log(`  Name: ${branch.name}`);
-      console.log(`  Parent Branch: ${branch.parentBranch}`);
-      console.log(`  Parent Snapshot: ${branch.parentSnapshot}`);
-      console.log(`  Created: ${branch.created}`);
-      console.log(`  Dataset: ${branch.dataset}`);
-      console.log(`  Mount: ${branch.mount}`);
-      console.log(`  Used: ${branch.used}`);
-      console.log(`  Available: ${branch.available}`);
-      console.log(`  Referenced: ${branch.referenced}`);
-      console.log(`  Compress Ratio: ${branch.compressratio}`);
+      const table = new Table()
+        .header(["Property", "Value"])
+        .body([
+          ["Branch Name", info.name],
+          ["Parent Branch", info.parentBranch],
+          ["Parent Snapshot", info.parentSnapshot],
+          ["Dataset", info.dataset],
+          ["Mount Point", info.mount],
+          ["Used", info.used],
+          ["Available", info.available],
+          ["Referenced", info.referenced],
+          ["Compression Ratio", info.compressratio],
+          ["Created", info.created],
+          ["Clones", info.clones.length > 0 ? info.clones.join(", ") : "None"],
+        ]);
 
-      if (branch.clones.length > 0) {
-        console.log("  Clones:");
-        branch.clones.forEach((clone) => console.log(`    - ${clone}`));
-      } else {
-        console.log("  Clones: None");
-      }
+      console.log(table.toString());
     } catch (error) {
-      const errorMessage = error instanceof Error
-        ? error.message
-        : String(error);
-      log.error(errorMessage);
+      log.error(error instanceof Error ? error.message : String(error));
       Deno.exit(1);
     }
   });
 
 const branchSnapshotCommand = new Command()
-  .description("Create snapshot from branch")
+  .description("Create a snapshot from a branch")
   .arguments("<branch:string> <snapshot:string>")
   .option("-m, --message <message>", "Snapshot message", {
     default: "Branch snapshot",
@@ -164,18 +144,20 @@ const branchSnapshotCommand = new Command()
       branch: string,
       snapshot: string,
     ) => {
+      await loadConfig(options.config);
+      const branchService = new BranchService();
+
       try {
-        await loadConfig(options.config);
         await branchService.createBranchSnapshot(
           branch,
           snapshot,
           options.message,
         );
+        log.success(
+          `Snapshot '${snapshot}' created successfully from branch '${branch}'`,
+        );
       } catch (error) {
-        const errorMessage = error instanceof Error
-          ? error.message
-          : String(error);
-        log.error(errorMessage);
+        log.error(error instanceof Error ? error.message : String(error));
         Deno.exit(1);
       }
     },
