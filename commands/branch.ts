@@ -2,8 +2,8 @@
 
 import { Command } from "@cliffy/command";
 import { Table } from "@cliffy/table";
-import { log } from "../utils.ts";
-import { loadConfig } from "../config.ts";
+import { log, pickValidPort } from "../utils.ts";
+import { getConfig, loadConfig } from "../config.ts";
 import { BranchService } from "../services/branch.ts";
 
 const createBranchCommand = new Command()
@@ -11,18 +11,37 @@ const createBranchCommand = new Command()
   .arguments("<name:string>")
   .option("-f, --from <snapshot>", "Create branch from specific snapshot")
   .option("-p, --parent <parent>", "Parent branch name", { default: "main" })
+  .option(
+    "--port <port:number>",
+    "Specific port for PostgreSQL instance (auto-picked if not specified)",
+  )
   .option("-c, --config <config>", "Configuration file path")
   .action(
     async (
-      options: { from?: string; parent: string; config?: string },
+      options: {
+        from?: string;
+        parent: string;
+        port?: number;
+        config?: string;
+      },
       name: string,
     ) => {
       await loadConfig(options.config);
       const branchService = new BranchService();
 
       try {
-        await branchService.createBranch(name, options.from, options.parent);
+        const config = getConfig();
+        const selectedPort = await pickValidPort(config, options.port);
+
+        await branchService.createBranch(
+          name,
+          selectedPort,
+          options.from,
+          options.parent,
+        );
+
         log.success(`Branch '${name}' created successfully`);
+        log.info(`PostgreSQL instance started on port ${selectedPort}`);
       } catch (error) {
         log.error(error instanceof Error ? error.message : String(error));
         Deno.exit(1);
@@ -121,6 +140,8 @@ const branchInfoCommand = new Command()
           ["Referenced", info.referenced],
           ["Compression Ratio", info.compressratio],
           ["Created", info.created],
+          ["PostgreSQL Port", info.port ? info.port.toString() : "Not running"],
+          ["PostgreSQL Status", info.pgStatus || "Not running"],
           ["Clones", info.clones.length > 0 ? info.clones.join(", ") : "None"],
         ]);
 
@@ -130,6 +151,59 @@ const branchInfoCommand = new Command()
       Deno.exit(1);
     }
   });
+
+const startPostgresCommand = new Command()
+  .description("Start PostgreSQL instance for a branch")
+  .arguments("<name:string>")
+  .option(
+    "-p, --port <port:number>",
+    "Specific port for PostgreSQL instance (optional)",
+  )
+  .option("-c, --config <config>", "Configuration file path")
+  .action(
+    async (
+      options: { port?: number; config?: string },
+      name: string,
+    ) => {
+      await loadConfig(options.config);
+      const branchService = new BranchService();
+
+      try {
+        const config = getConfig();
+        const selectedPort = await pickValidPort(config, options.port);
+
+        await branchService.startBranchPostgres(name, selectedPort);
+        log.success(
+          `PostgreSQL instance started for branch '${name}' on port ${selectedPort}`,
+        );
+      } catch (error) {
+        log.error(error instanceof Error ? error.message : String(error));
+        Deno.exit(1);
+      }
+    },
+  );
+
+const stopPostgresCommand = new Command()
+  .description("Stop PostgreSQL instance for a branch")
+  .arguments("<name:string>")
+  .option("-c, --config <config>", "Configuration file path")
+  .action(
+    async (
+      options: { config?: string },
+      name: string,
+    ) => {
+      await loadConfig(options.config);
+      const branchService = new BranchService();
+
+      try {
+        await branchService.stopBranchPostgres(name);
+        log.success(`PostgreSQL instance stopped for branch '${name}'`);
+      } catch (error) {
+        log.error(error instanceof Error ? error.message : String(error));
+        Deno.exit(1);
+      }
+    },
+  );
 
 const branchSnapshotCommand = new Command()
   .description("Create a snapshot from a branch")
@@ -165,8 +239,13 @@ const branchSnapshotCommand = new Command()
 
 export const branchCommand = new Command()
   .description("Manage branches")
+  .action(function () {
+    this.showHelp();
+  })
   .command("create", createBranchCommand)
   .command("delete", deleteBranchCommand)
   .command("list", listBranchesCommand)
   .command("info", branchInfoCommand)
-  .command("snapshot", branchSnapshotCommand);
+  .command("snapshot", branchSnapshotCommand)
+  .command("start", startPostgresCommand)
+  .command("stop", stopPostgresCommand);

@@ -1,7 +1,7 @@
 // ZFS Verioned PostgreSQL Engine - Utility Functions
 
 import { colors } from "@cliffy/ansi/colors";
-import { getConfig } from "./config.ts";
+import { Config, getConfig } from "./config.ts";
 
 export const log = {
   debug: (message: string) => {
@@ -94,6 +94,30 @@ export function validateSnapshotName(name: string): boolean {
 export function validatePort(port: number): boolean {
   const config = getConfig();
   return port >= config.clonePortStart && port <= config.clonePortEnd;
+}
+
+export async function pickValidPort(
+  config: Config,
+  port?: number,
+): Promise<number> {
+  if (port && validatePort(port)) {
+    const inUse = await isPortInUse(port);
+    if (!inUse) {
+      return port;
+    }
+    throw new Error(`Port ${port} is already in use`);
+  }
+
+  for (let p = config.clonePortStart; p <= config.clonePortEnd; p++) {
+    const inUse = await isPortInUse(p);
+    if (!inUse) {
+      return p;
+    }
+  }
+
+  throw new Error(
+    `No available ports in range ${config.clonePortStart}-${config.clonePortEnd}`,
+  );
 }
 
 export async function snapshotExists(snapshotName: string): Promise<boolean> {

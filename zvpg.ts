@@ -7,7 +7,6 @@ import { initCommand } from "./commands/init.ts";
 import { statusCommand } from "./commands/status.ts";
 import { snapshotCommand } from "./commands/snapshot.ts";
 import { commitCommand } from "./commands/commit.ts";
-import { cloneCommand } from "./commands/clone.ts";
 import { branchCommand } from "./commands/branch.ts";
 
 const logo = await Deno.readTextFile(
@@ -19,14 +18,13 @@ console.log("\n\n" + logo);
 const cli = new Command()
   .name("zvpg")
   .version(version)
-  .description("ZFS Verioned PostgreSQL Engine - PostgreSQL Clone Management")
+  .description("ZFS Verioned PostgreSQL Engine - PostgreSQL Branch Management")
   .action(function () {
     this.showHelp();
   })
   .command("init", initCommand)
   .command("commit", commitCommand)
   .command("branch", branchCommand)
-  .command("clone", cloneCommand)
   .command("status", statusCommand)
   .command("snapshot", snapshotCommand);
 

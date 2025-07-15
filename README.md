@@ -10,19 +10,18 @@
   [![Forks](https://img.shields.io/github/forks/Lemonhx/zvpg?style=social)](https://github.com/Lemonhx/zvpg/network/members)
 </div>
 
-ZVPG (ZFS Versioned PostgreSQL Engine) revolutionizes database development and testing workflows. It leverages the native power of ZFS snapshots and clones to create instantaneous, space-efficient, and fully independent copies of your PostgreSQL databases. Think of it as `git` for your database, allowing you to create branches for features, test schemas, or run isolated experiments without impacting your primary instance or consuming significant disk space.
+ZVPG (ZFS Versioned PostgreSQL Engine) revolutionizes database development and testing workflows. It leverages the native power of ZFS snapshots and branches to create instantaneous, space-efficient, and fully independent copies of your PostgreSQL databases. Think of it as `git` for your database, allowing you to create branches for features, test schemas, or run isolated experiments without impacting your primary instance or consuming significant disk space.
 
 ## Key Features
 
 -   **Instantaneous Snapshots:** Create atomic, read-only snapshots of your entire PostgreSQL data directory in milliseconds.
--   **Zero-Cost Clones:** Spin up multiple, fully-functional, writeable PostgreSQL instances from any snapshot, instantly. Clones are copy-on-write, meaning they only store the differences, saving immense disk space.
+-   **Zero-Cost Branches:** Spin up multiple, fully-functional, writeable PostgreSQL instances from any snapshot, instantly. Branches are copy-on-write, meaning they only store the differences, saving immense disk space.
 -   **Git-like Branching:** Manage different database states with a familiar branching model. Create a branch, make schema changes, test, and then merge or discard your work.
--   **Complete Isolation:** Every clone runs as an independent PostgreSQL instance on its own port, ensuring no interference between development, testing, and production environments.
+-   **Complete Isolation:** Every branch can run as an independent PostgreSQL instance on its own port, ensuring no interference between development, testing, and production environments.
 -   **Comprehensive CLI:** A powerful and intuitive command-line interface with subcommands for all operations:
     - `zvpg init` - Environment initialization and health checking
     - `zvpg snapshot` / `zvpg commit` - Snapshot/commit management
-    - `zvpg clone` - Clone lifecycle management
-    - `zvpg branch` - Git-like branch operations
+    - `zvpg branch` - Git-like branch operations with PostgreSQL instance management
     - `zvpg status` - System monitoring and health checks
 -   **Flexible Configuration:** JSON-based configuration with sensible defaults and extensive customization options.
 
@@ -31,14 +30,14 @@ ZVPG (ZFS Versioned PostgreSQL Engine) revolutionizes database development and t
 ZVPG acts as a control plane, orchestrating ZFS and PostgreSQL to provide its versioning capabilities. The core interaction can be visualized as follows:
 
 ```mermaid
-graph LR
+graph TD
     subgraph User
         A[CLI: zvpg]
     end
 
     subgraph ZVPG Engine
         B[Command Parser]
-        C[Service Layer: Snapshot, Clone, Branch]
+        C[Service: Snapshot, Branch]
     end
 
     subgraph System
@@ -49,16 +48,16 @@ graph LR
     A -- Manages --> B
     B -- Executes --> C
     C -- zfs snapshot --> D
-    C -- zfs clone --> D
+    C -- zfs branch --> D
     C -- pg_ctl --> E
 
     D -- Provides data for --> E
 ```
 
 1.  The user interacts with the `zvpg` **CLI**.
-2.  The command is parsed and passed to the appropriate **Service** (e.g., `SnapshotService`).
-3.  The service layer executes low-level **ZFS commands** to create snapshots or clones of the main data volume.
-4.  When a clone is started, the service uses **`pg_ctl`** to start a new, independent PostgreSQL instance using the cloned data directory, assigning it a unique port.
+2.  The command is parsed and passed to the appropriate **Service** (e.g., `SnapshotService`, `BranchService`).
+3.  The service layer executes low-level **ZFS commands** to create snapshots or branches of the main data volume.
+4.  When a branch with PostgreSQL is started, the service uses **`pg_ctl`** to start a new, independent PostgreSQL instance using the branch data directory, assigning it a unique port.
 
 ## Getting Started
 
@@ -73,7 +72,7 @@ Before you begin, ensure you have the following dependencies installed and confi
 
 ### Initialization
 
-Once installed, you need to initialize ZVPG. This command will set up the necessary ZFS datasets for storing the main PostgreSQL data, snapshots, and clones.
+Once installed, you need to initialize ZVPG. This command will set up the necessary ZFS datasets for storing the main PostgreSQL data, snapshots, and branches.
 
 ```bash
 # Initialize the ZVPG environment
@@ -137,44 +136,9 @@ Commits are an alias for snapshots, providing a Git-like interface.
     zvpg commit remove my_commit
     ```
 
-### Clones
-
-Clones are writeable copies of snapshots. This is where you do your work.
-
--   **Create a clone from a snapshot:**
-    ```bash
-    zvpg clone create my_first_snapshot my_clone --port 5433
-    ```
-
--   **List all active clones:**
-    ```bash
-    zvpg clone list
-    ```
-
--   **Get clone information:**
-    ```bash
-    zvpg clone info my_clone
-    ```
-
--   **Start/Stop a clone's PostgreSQL instance:**
-    ```bash
-    zvpg clone start my_clone
-    zvpg clone stop my_clone
-    ```
-
--   **Connect to a clone:**
-    ```bash
-    psql -p 5433 -U <your_user> <your_db>
-    ```
-
--   **Delete a clone:**
-    ```bash
-    zvpg clone delete my_clone
-    ```
-
 ### Branches
 
-Branches provide a higher-level abstraction for managing development workflows, similar to Git. They use the dedicated ZFS-based branch system.
+Branches provide a comprehensive abstraction for managing development workflows, similar to Git. They use the dedicated ZFS-based branch system and can optionally run PostgreSQL instances.
 
 -   **Create a branch from current state (latest snapshot):**
     ```bash
@@ -191,6 +155,21 @@ Branches provide a higher-level abstraction for managing development workflows, 
     zvpg branch create feature/new-api --parent development
     ```
 
+-   **Create a branch with specific PostgreSQL port:**
+    ```bash
+    zvpg branch create feature/new-api --port 5433
+    ```
+
+-   **Start PostgreSQL instance for an existing branch:**
+    ```bash
+    zvpg branch start feature/new-api --port 5433
+    ```
+
+-   **Stop PostgreSQL instance for a branch:**
+    ```bash
+    zvpg branch stop feature/new-api
+    ```
+
 -   **List branches:**
     ```bash
     zvpg branch list
@@ -199,6 +178,11 @@ Branches provide a higher-level abstraction for managing development workflows, 
 -   **Get branch information:**
     ```bash
     zvpg branch info feature/new-api
+    ```
+
+-   **Connect to a branch's PostgreSQL instance:**
+    ```bash
+    psql -p 5433 -U <your_user> <your_db>
     ```
 
 -   **Create a snapshot from a branch:**
@@ -220,9 +204,9 @@ Get a comprehensive overview of the entire system.
     zvpg status system
     ```
 
--   **Show detailed clones status:**
+-   **Show detailed branches status:**
     ```bash
-    zvpg status clones
+    zvpg status branches
     ```
 
 -   **Show detailed snapshots status:**
@@ -243,7 +227,7 @@ Key configuration options include:
 
 -   `zfsPool`: The name of the ZFS pool to use.
 -   `mountDir`: The base directory where ZFS datasets are mounted.
--   `clonePortStart` / `clonePortEnd`: The range of network ports to use for clones.
+-   `clonePortStart` / `clonePortEnd`: The range of network ports to use for branch PostgreSQL instances.
 -   `logLevel`: The logging verbosity.
 
 ## Command Reference
@@ -270,29 +254,21 @@ zvpg commit show <name> [options]        # Show commit information
 zvpg commit remove <name> [options]      # Remove a commit
 ```
 
-### Clone Commands
-```bash
-zvpg clone create <snapshot> <name> [options]  # Create a clone from snapshot
-zvpg clone list [options]                      # List all clones
-zvpg clone info <name> [options]               # Show clone information
-zvpg clone start <name> [options]              # Start clone PostgreSQL instance
-zvpg clone stop <name> [options]               # Stop clone PostgreSQL instance
-zvpg clone delete <name> [options]             # Delete a clone
-```
-
 ### Branch Commands
 ```bash
-zvpg branch create <name> [options]          # Create a new branch
-zvpg branch list [options]                   # List all branches
-zvpg branch info <name> [options]            # Show branch information
-zvpg branch delete <name> [options]          # Delete a branch
-zvpg branch snapshot <branch> <snapshot> [options]  # Create snapshot from branch
+zvpg branch create <name> [options]               # Create a new branch (PostgreSQL auto-started)
+zvpg branch list [options]                        # List all branches
+zvpg branch info <name> [options]                 # Show branch information
+zvpg branch delete <name> [options]               # Delete a branch
+zvpg branch start <name> [options]                # Start PostgreSQL instance for branch
+zvpg branch stop <name> [options]                 # Stop PostgreSQL instance for branch
+zvpg branch snapshot <branch> <snapshot> [options] # Create snapshot from branch
 ```
 
 ### Status Commands
 ```bash
 zvpg status system [options]             # Show complete system status
-zvpg status clones [options]             # Show detailed clones status
+zvpg status branches [options]           # Show detailed branches status
 zvpg status snapshots [options]          # Show detailed snapshots status
 zvpg status health [options]             # Perform system health check
 ```
@@ -301,7 +277,7 @@ zvpg status health [options]             # Perform system health check
 - `-c, --config <config>`: Configuration file path
 - `-f, --format <format>`: Output format (table|json) for list commands
 - `-m, --message <message>`: Message for snapshot/commit creation
-- `-p, --port <port>`: Port number for clones
+- `-p, --port <port>`: Port number for PostgreSQL instances
 - `--from <snapshot>`: Create branch from specific snapshot
 - `--parent <parent>`: Parent branch name (default: main)
 - `--force`: Force operations (where applicable)
@@ -320,16 +296,16 @@ zvpg status health [options]             # Perform system health check
    zvpg snapshot create baseline -m "Initial production state"
    ```
 
-3. **Create a development branch:**
+3. **Create a development branch with PostgreSQL instance:**
    ```bash
    zvpg branch create feature/user-auth --from baseline
    ```
 
-4. **Work on your branch (the branch provides a ZFS dataset):**
+4. **Work on your branch (PostgreSQL automatically started):**
    ```bash
-   # Access the branch data at the mount point
-   # Or create a clone from the branch for PostgreSQL access
-   zvpg clone create feature/user-auth test-clone --port 5434
+   # Connect to the branch's PostgreSQL instance (port shown in creation output)
+   zvpg branch info feature/user-auth  # Check the port
+   psql -p <port> -U postgres -h localhost
    ```
 
 5. **Create a snapshot from your branch:**
@@ -337,28 +313,36 @@ zvpg status health [options]             # Perform system health check
    zvpg branch snapshot feature/user-auth milestone-1 -m "User authentication milestone"
    ```
 
-6. **Clean up when no longer needed:**
+6. **Stop the PostgreSQL instance when done:**
+   ```bash
+   zvpg branch stop feature/user-auth
+   ```
+
+7. **Clean up when no longer needed:**
    ```bash
    zvpg branch delete feature/user-auth
    ```
 
 ### Testing Workflow
 
-1. **Create a clone for testing:**
+1. **Create a testing branch:**
    ```bash
-   zvpg clone create baseline test-env --port 5435
+   zvpg branch create testing --from baseline
    ```
 
-2. **Run your tests against the clone:**
+2. **Run your tests against the branch:**
    ```bash
-   # Your tests connect to port 5435
-   npm test -- --db-port=5435
+   # Get the automatically assigned port
+   PORT=$(zvpg branch info testing | grep "PostgreSQL Port" | awk '{print $3}')
+   # Your tests connect to the assigned port
+   npm test -- --db-port=$PORT
    ```
 
 3. **Reset the test environment:**
    ```bash
-   zvpg clone delete test-env
-   zvpg clone create baseline test-env --port 5435
+   zvpg branch stop testing
+   zvpg branch delete testing
+   zvpg branch create testing --from baseline
    ```
 
 ### Monitoring and Maintenance
@@ -368,17 +352,22 @@ zvpg status health [options]             # Perform system health check
    zvpg status system
    ```
 
-2. **Monitor clones:**
+2. **Monitor branches:**
    ```bash
-   zvpg status clones
+   zvpg branch list
    ```
 
-3. **Check snapshots usage:**
+3. **Check branch details:**
+   ```bash
+   zvpg branch info my-branch
+   ```
+
+4. **Check snapshots usage:**
    ```bash
    zvpg status snapshots
    ```
 
-4. **Perform health check:**
+5. **Perform health check:**
    ```bash
    zvpg status health
    ```

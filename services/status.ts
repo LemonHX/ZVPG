@@ -1,5 +1,6 @@
 import { type Config } from "../config.ts";
-import { isPortInUse, log, runCommand } from "../utils.ts";
+import { log, runCommand } from "../utils.ts";
+import { BranchService } from "./branch.ts";
 
 export interface SystemStatus {
   zfsPool: {
@@ -14,13 +15,13 @@ export interface SystemStatus {
     running: boolean;
     mainPort: number;
   };
-  clones: {
+  branches: {
     total: number;
     active: number;
     inactive: number;
     details: Array<{
       name: string;
-      port: number;
+      port?: number;
       status: "running" | "stopped" | "unknown";
       size: string;
       created: string;
@@ -63,13 +64,13 @@ export class StatusService {
         zfsPool,
         postgres,
         snapshots,
-        clones,
+        branches,
         system,
       ] = await Promise.all([
         this.getZfsPoolStatus(),
         this.getPostgresStatus(),
         this.getSnapshotsStatus(),
-        this.getClonesStatus(),
+        this.getBranchesStatus(),
         this.getSystemInfo(),
       ]);
 
@@ -77,7 +78,7 @@ export class StatusService {
         zfsPool,
         postgres,
         snapshots,
-        clones,
+        branches,
         system,
       };
 
@@ -225,43 +226,33 @@ export class StatusService {
   }
 
   /**
-   * Get clones status
-   * @returns Promise<SystemStatus['clones']>
+   * Get branches status
+   * @returns Promise<SystemStatus['branches']>
    */
-  private async getClonesStatus(): Promise<SystemStatus["clones"]> {
+  private async getBranchesStatus(): Promise<SystemStatus["branches"]> {
     try {
-      const result = await runCommand("zfs", [
-        "list",
-        "-r",
-        "-t",
-        "filesystem",
-        "-o",
-        "name,origin,used,creation",
-        "-H",
-        this.config.zfsPool,
-      ]);
+      const branchService = new BranchService();
+      const branches = await branchService.listBranches();
 
-      if (!result.success || !result.stdout) {
-        throw new Error(result.stderr || "Failed to list clones");
-      }
-
-      const lines = result.stdout.trim().split("\n").filter(Boolean);
-      const details: SystemStatus["clones"]["details"] = [];
+      const details: SystemStatus["branches"]["details"] = [];
       let active = 0;
 
-      for (const line of lines) {
-        const [fullName, origin, size, created] = line.split("\t");
-        if (!origin || origin === "-") continue;
+      for (const branch of branches) {
+        const branchInfo = await branchService.getBranchInfo(branch.name);
+        const hasPostgres = branchInfo.port !== undefined;
+        const status = branchInfo.pgStatus || "unknown";
 
-        const name = fullName.substring(fullName.lastIndexOf("/") + 1);
-        const port = await this.getClonePort(name);
-        const status = await this.getCloneStatus(port);
-
-        if (status === "running") {
+        if (hasPostgres && status === "running") {
           active++;
         }
 
-        details.push({ name, port, status, size, created });
+        details.push({
+          name: branch.name,
+          port: branchInfo.port,
+          status,
+          size: branch.used,
+          created: branch.created,
+        });
       }
 
       return {
@@ -272,7 +263,7 @@ export class StatusService {
       };
     } catch (error) {
       const err = error as Error;
-      log.warn(`Could not get clones status: ${err.message}`);
+      log.warn(`Could not get branches status: ${err.message}`);
       return { total: 0, active: 0, inactive: 0, details: [] };
     }
   }
@@ -321,44 +312,6 @@ export class StatusService {
         memoryUsage: "N/A",
         diskUsage: "N/A",
       };
-    }
-  }
-
-  /**
-   * Get clone port
-   * @param cloneName - Name of the clone
-   * @returns Promise<number>
-   */
-  private async getClonePort(cloneName: string): Promise<number> {
-    try {
-      const configPath =
-        `${this.config.mountDir}/${this.config.clonesSubdir}/${cloneName}/postgresql.conf`;
-      const result = await runCommand("grep", ["^port = ", configPath]);
-      if (!result.success || !result.stdout) {
-        return 0;
-      }
-      const portLine = result.stdout.trim();
-      return portLine ? parseInt(portLine.split("=")[1].trim(), 10) : 0;
-    } catch {
-      return 0; // Not found or other error
-    }
-  }
-
-  /**
-   * Get clone status (running/stopped/unknown)
-   * @param port - Port of the clone
-   * @returns Promise<"running" | "stopped" | "unknown">
-   */
-  private async getCloneStatus(
-    port: number,
-  ): Promise<"running" | "stopped" | "unknown"> {
-    if (port === 0) return "unknown";
-    try {
-      return await isPortInUse(port) ? "running" : "stopped";
-    } catch (error) {
-      const err = error as Error;
-      log.warn(`Could not check port status for ${port}: ${err.message}`);
-      return "unknown";
     }
   }
 

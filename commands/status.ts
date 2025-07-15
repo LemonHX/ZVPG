@@ -47,16 +47,16 @@ const systemStatusCommand = new Command()
           ]);
         console.log(pgTable.toString());
 
-        // Clones Status
-        console.log("\n=== Clones Status ===");
-        const clonesTable = new Table()
+        // Branches Status
+        console.log("\n=== Branches Status ===");
+        const branchesTable = new Table()
           .header(["Property", "Value"])
           .body([
-            ["Total", status.clones.total.toString()],
-            ["Active", status.clones.active.toString()],
-            ["Inactive", status.clones.inactive.toString()],
+            ["Total", status.branches.total.toString()],
+            ["Active", status.branches.active.toString()],
+            ["Inactive", status.branches.inactive.toString()],
           ]);
-        console.log(clonesTable.toString());
+        console.log(branchesTable.toString());
 
         // Snapshots Status
         console.log("\n=== Snapshots Status ===");
@@ -87,8 +87,8 @@ const systemStatusCommand = new Command()
     }
   });
 
-const clonesStatusCommand = new Command()
-  .description("Show detailed clones status")
+const branchesStatusCommand = new Command()
+  .description("Show detailed branches status")
   .option("-f, --format <format>", "Output format (table|json)", {
     default: "table",
   })
@@ -102,22 +102,22 @@ const clonesStatusCommand = new Command()
       const status = await statusService.getSystemStatus();
 
       if (options.format === "json") {
-        console.log(JSON.stringify(status.clones, null, 2));
+        console.log(JSON.stringify(status.branches, null, 2));
       } else {
-        if (status.clones.details.length === 0) {
-          log.info("No clones found");
+        if (status.branches.details.length === 0) {
+          log.info("No branches found");
           return;
         }
 
         const table = new Table()
           .header(["Name", "Port", "Status", "Size", "Created"])
           .body(
-            status.clones.details.map((clone) => [
-              clone.name,
-              clone.port.toString(),
-              clone.status,
-              clone.size,
-              clone.created,
+            status.branches.details.map((branch) => [
+              branch.name,
+              branch.port ? branch.port.toString() : "N/A",
+              branch.status,
+              branch.size,
+              branch.created,
             ]),
           );
 
@@ -194,8 +194,8 @@ const healthCheckCommand = new Command()
         issues.push("PostgreSQL is not running");
       }
 
-      if (status.clones.inactive > 0) {
-        issues.push(`${status.clones.inactive} clones are inactive`);
+      if (status.branches.inactive > 0) {
+        issues.push(`${status.branches.inactive} branches are inactive`);
       }
 
       if (issues.length === 0) {
@@ -216,6 +216,6 @@ export const statusCommand = new Command()
     this.showHelp();
   })
   .command("system", systemStatusCommand)
-  .command("clones", clonesStatusCommand)
+  .command("branches", branchesStatusCommand)
   .command("snapshots", snapshotsStatusCommand)
   .command("health", healthCheckCommand);

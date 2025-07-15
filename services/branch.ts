@@ -2,6 +2,7 @@
 
 import {
   formatISOTimestamp,
+  isPortInUse,
   log,
   runCommand,
   validateBranchName,
@@ -20,6 +21,8 @@ export interface BranchInfo {
   referenced: string;
   compressratio: string;
   clones: string[];
+  port?: number;
+  pgStatus?: "running" | "stopped" | "unknown";
 }
 
 export class BranchService {
@@ -28,11 +31,13 @@ export class BranchService {
   /**
    * 创建新分支
    * @param name 分支名称
+   * @param port 端口号，用于启动PostgreSQL实例
    * @param parentSnapshot 父快照名称
    * @param parentBranch 父分支名称
    */
   async createBranch(
     name: string,
+    port: number,
     parentSnapshot?: string,
     parentBranch = "main",
   ): Promise<void> {
@@ -135,6 +140,9 @@ export class BranchService {
     const branchMount = this.getBranchMount(name);
     log.success(`Branch created successfully: ${name}`);
     log.info(`Branch mount: ${branchMount}`);
+
+    // Always start PostgreSQL instance for new branch
+    await this.startBranchPostgres(name, port);
   }
 
   /**
@@ -179,6 +187,13 @@ export class BranchService {
           `Cannot delete branch ${name} - it has dependent clones: ${cloneList}. Use --force to delete anyway.`,
         );
       }
+    }
+
+    // Stop PostgreSQL instance if running
+    try {
+      await this.stopBranchPostgres(name);
+    } catch (error) {
+      log.warn(`Failed to stop PostgreSQL for branch '${name}': ${error}`);
     }
 
     log.info(`Deleting branch: ${name}`);
@@ -279,6 +294,12 @@ export class BranchService {
     // 获取克隆列表
     const clones = await this.getBranchClones(branchDataset);
 
+    // 获取PostgreSQL端口和状态
+    const port = await this.getBranchPostgresPort(name);
+    const pgStatus = port
+      ? await this.getBranchPostgresStatus(name)
+      : undefined;
+
     return {
       name,
       parentBranch,
@@ -291,6 +312,8 @@ export class BranchService {
       referenced,
       compressratio,
       clones,
+      port,
+      pgStatus,
     };
   }
 
@@ -359,6 +382,76 @@ export class BranchService {
     ]);
 
     log.success(`Branch snapshot created successfully: ${fullSnapshotName}`);
+  }
+
+  /**
+   * 启动分支的PostgreSQL实例
+   * @param name 分支名称
+   * @param port 端口号
+   */
+  async startBranchPostgres(name: string, port: number): Promise<void> {
+    if (await isPortInUse(port)) {
+      throw new Error(`Port ${port} is already in use`);
+    }
+
+    const branchDataset = this.getBranchDataset(name);
+
+    // Check if branch exists
+    const branchExists = await runCommand("zfs", ["list", branchDataset], {
+      stdout: "null",
+      stderr: "null",
+    });
+
+    if (!branchExists.success) {
+      throw new Error(`Branch does not exist: ${name}`);
+    }
+
+    // Copy/update PostgreSQL configuration
+    await this.updatePostgresConfig(name, port);
+
+    // Start PostgreSQL instance
+    await this.startPostgresInstance(name, port);
+
+    // Store port in branch properties
+    await runCommand("zfs", [
+      "set",
+      `zvpg:port=${port}`,
+      branchDataset,
+    ]);
+
+    log.success(
+      `PostgreSQL instance started for branch '${name}' on port ${port}`,
+    );
+  }
+
+  /**
+   * 停止分支的PostgreSQL实例
+   * @param name 分支名称
+   */
+  async stopBranchPostgres(name: string): Promise<void> {
+    const branchDataset = this.getBranchDataset(name);
+
+    // Check if branch exists
+    const branchExists = await runCommand("zfs", ["list", branchDataset], {
+      stdout: "null",
+      stderr: "null",
+    });
+
+    if (!branchExists.success) {
+      throw new Error(`Branch does not exist: ${name}`);
+    }
+
+    // Stop PostgreSQL instance
+    await this.stopPostgresInstance(name);
+
+    // Remove port from branch properties
+    await runCommand("zfs", [
+      "inherit",
+      "zvpg:port",
+      branchDataset,
+    ]);
+
+    log.success(`PostgreSQL instance stopped for branch '${name}'`);
   }
 
   // 私有辅助方法
@@ -448,5 +541,154 @@ export class BranchService {
     }
 
     return clones;
+  }
+
+  /**
+   * Update PostgreSQL configuration for a branch
+   * @param branchName - Name of the branch
+   * @param port - Port number
+   */
+  private async updatePostgresConfig(
+    branchName: string,
+    port: number,
+  ): Promise<void> {
+    const branchMount = this.getBranchMount(branchName);
+    const configPath = `${branchMount}/postgresql.conf`;
+
+    // Update port in PostgreSQL configuration
+    await runCommand("sed", [
+      "-i",
+      `s/^#*port = .*/port = ${port}/`,
+      configPath,
+    ]);
+
+    // Update socket directory
+    const socketDir = `${this.config.mountDir}/${this.config.socketSubdir}`;
+    await runCommand("sed", [
+      "-i",
+      `s|^#*unix_socket_directories = .*|unix_socket_directories = '${socketDir}'|`,
+      configPath,
+    ]);
+  }
+
+  /**
+   * Start PostgreSQL instance for a branch
+   * @param branchName - Name of the branch
+   * @param port - Port number
+   */
+  private async startPostgresInstance(
+    branchName: string,
+    port: number,
+  ): Promise<void> {
+    const branchMount = this.getBranchMount(branchName);
+    const logFile = `${branchMount}/postgresql.log`;
+
+    await runCommand("sudo", [
+      "-u",
+      this.config.postgresUser,
+      "pg_ctl",
+      "start",
+      "-D",
+      branchMount,
+      "-l",
+      logFile,
+      "-o",
+      `-p ${port}`,
+    ]);
+
+    // Wait a moment for PostgreSQL to start
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+
+  /**
+   * Stop PostgreSQL instance for a branch
+   * @param branchName - Name of the branch
+   */
+  private async stopPostgresInstance(branchName: string): Promise<void> {
+    const branchMount = this.getBranchMount(branchName);
+
+    try {
+      await runCommand("sudo", [
+        "-u",
+        this.config.postgresUser,
+        "pg_ctl",
+        "stop",
+        "-D",
+        branchMount,
+        "-m",
+        "fast",
+      ]);
+    } catch (error) {
+      const err = error as Error;
+      log.warn(`Failed to stop PostgreSQL instance gracefully: ${err.message}`);
+
+      // Try force stop
+      try {
+        await runCommand("sudo", [
+          "-u",
+          this.config.postgresUser,
+          "pg_ctl",
+          "stop",
+          "-D",
+          branchMount,
+          "-m",
+          "immediate",
+        ]);
+      } catch (forceError) {
+        const forceErr = forceError as Error;
+        log.warn(
+          `Failed to force stop PostgreSQL instance: ${forceErr.message}`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Get PostgreSQL port from branch properties
+   * @param branchName - Name of the branch
+   * @returns Port number or undefined if not set
+   */
+  private async getBranchPostgresPort(
+    branchName: string,
+  ): Promise<number | undefined> {
+    const branchDataset = this.getBranchDataset(branchName);
+    const portStr = await this.getBranchProperty(branchDataset, "zvpg:port");
+
+    if (!portStr || portStr === "-") {
+      return undefined;
+    }
+
+    const port = parseInt(portStr);
+    return isNaN(port) ? undefined : port;
+  }
+
+  /**
+   * Check PostgreSQL instance status for a branch
+   * @param branchName - Name of the branch
+   * @returns Status string
+   */
+  private async getBranchPostgresStatus(
+    branchName: string,
+  ): Promise<"running" | "stopped" | "unknown"> {
+    const branchMount = this.getBranchMount(branchName);
+
+    try {
+      const result = await runCommand("sudo", [
+        "-u",
+        this.config.postgresUser,
+        "pg_ctl",
+        "status",
+        "-D",
+        branchMount,
+      ]);
+
+      if (result.success && result.stdout?.includes("server is running")) {
+        return "running";
+      } else {
+        return "stopped";
+      }
+    } catch {
+      return "unknown";
+    }
   }
 }
