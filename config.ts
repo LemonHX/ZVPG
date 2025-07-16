@@ -9,19 +9,17 @@ export interface Config {
 
   postgresUser: string;
   postgresDb: string;
-  postgresVersion: string;
-  postgresBinPath: string;
-  postgresService: string;
 
-  clonePortStart: number;
-  clonePortEnd: number;
-  cloneAccessHost: string;
-  maxClones: number;
-  cloneIdleTimeout: number;
+  // Container configuration
+  containerRuntime: "docker" | "podman" | "nerdctl";
+  pgBaseImage: string;
+  pgConfigDir: string;
+  pgHbaPath: string;
+  pgConfPath: string;
+  pgIdentPath: string;
 
-  snapshotRetention: number;
-  preSnapshotSuffix: string;
-  snapshotInterval: number;
+  branchPortStart: number;
+  branchPortEnd: number;
 
   branchDefault: string;
   branchNamingPattern: string;
@@ -39,22 +37,20 @@ export const defaultConfig: Config = {
 
   postgresUser: "postgres",
   postgresDb: "postgres",
-  postgresVersion: "17",
-  postgresBinPath: "/usr/lib/postgresql/17/bin",
-  postgresService: "postgresql",
 
-  clonePortStart: 6001,
-  clonePortEnd: 6099,
-  cloneAccessHost: "127.0.0.1",
-  maxClones: 10,
-  cloneIdleTimeout: 300,
+  containerRuntime: "docker",
+  pgBaseImage: "postgres:17",
+  pgConfigDir: "~/.zvpg",
+  pgHbaPath: "~/.zvpg/pg_hba.conf",
+  pgConfPath: "~/.zvpg/postgresql.conf",
+  pgIdentPath: "~/.zvpg/pg_ident.conf",
 
-  snapshotRetention: 24,
-  preSnapshotSuffix: "_pre",
-  snapshotInterval: 3600,
+  branchPortStart: 6001,
+  branchPortEnd: 6099,
 
   branchDefault: "main",
-  branchNamingPattern: "^[a-zA-Z0-9_-]+$",
+  branchNamingPattern:
+    "^(?!\\/|\\.|.*([\\/\\.]\\.|\\\/\\\/|\\.lock$))[\\p{L}\\p{N}\\-_\\/]+$",
 
   logLevel: "INFO",
   logDir: "/var/log/zvpg",

@@ -141,7 +141,7 @@ export class StatusService {
       const running = statusResult.success;
 
       // The main port is not explicitly in the config, let's assume it's the start of the clone range - 1 or a default
-      const mainPort = this.config.clonePortStart - 1;
+      const mainPort = this.config.branchPortStart - 1;
 
       return {
         version,
@@ -154,7 +154,7 @@ export class StatusService {
       return {
         version: "Unknown",
         running: false,
-        mainPort: this.config.clonePortStart - 1,
+        mainPort: this.config.branchPortStart - 1,
       };
     }
   }

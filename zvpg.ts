@@ -9,16 +9,40 @@ import { snapshotCommand } from "./commands/snapshot.ts";
 import { commitCommand } from "./commands/commit.ts";
 import { branchCommand } from "./commands/branch.ts";
 
-const logo = await Deno.readTextFile(
-  new URL("logo_output.txt", import.meta.url),
-);
+const logo = `
+╔══════════════╗ ███████╗██╗   ██╗██████╗  ██████╗ 
+║ ██  ██  ████ ║ ╚══███╔╝██║   ██║██╔══██╗██╔════╝ 
+║ ███ █ ██████ ║   ███╔╝ ██║   ██║██████╔╝██║  ███╗
+║ ███  ███████ ║  ███╔╝  ██║   ██║██╔═══╝ ██║   ██║
+║ ██   ███████ ║ ███████╗╚█████╔╝ ██║     ╚██████╔╝
+╚══════════════╝ ╚══════╝ ╚═══╝   ╚═╝      ╚═════╝ 
+`;
+
+function renderLogo(): string {
+  const lines = logo.split("\n");
+  const width = Math.max(...lines.map((line) => line.length));
+  let output = "";
+
+  for (const line of lines) {
+    for (let i = 0; i < line.length; i++) {
+      const ratio = i / width;
+      const r = Math.floor(255 - (255 * ratio));
+      const g = Math.floor(200 * ratio);
+      const b = Math.floor(255 - (55 * ratio));
+      output += `\x1b[38;2;${r};${g};${b}m${line[i]}`;
+    }
+    output += "\x1b[0m\n";
+  }
+
+  return output;
+}
 
 const cli = new Command()
   .name("zvpg")
   .version(version)
   .description("ZFS Verioned PostgreSQL Engine - PostgreSQL Branch Management")
   .action(function () {
-    console.log("\n\n" + logo);
+    console.log("\n" + renderLogo());
     this.showHelp();
   })
   .command("init", initCommand)

@@ -1,10 +1,14 @@
 // ZFS Verioned PostgreSQL Engine - Branch Service
 
 import {
+  expandPath,
   formatISOTimestamp,
+  getContainerName,
+  isContainerRunning,
   isPortInUse,
   log,
   runCommand,
+  stopContainer,
   validateBranchName,
 } from "../utils.ts";
 import { getConfig } from "../config.ts";
@@ -23,6 +27,7 @@ export interface BranchInfo {
   clones: string[];
   port?: number;
   pgStatus?: "running" | "stopped" | "unknown";
+  containerName?: string;
 }
 
 export class BranchService {
@@ -296,8 +301,9 @@ export class BranchService {
 
     // 获取PostgreSQL端口和状态
     const port = await this.getBranchPostgresPort(name);
-    const pgStatus = port
-      ? await this.getBranchPostgresStatus(name)
+    const containerName = port ? getContainerName(name, port) : undefined;
+    const pgStatus = containerName
+      ? await this.getBranchPostgresStatus(containerName)
       : undefined;
 
     return {
@@ -314,6 +320,7 @@ export class BranchService {
       clones,
       port,
       pgStatus,
+      containerName,
     };
   }
 
@@ -406,21 +413,29 @@ export class BranchService {
       throw new Error(`Branch does not exist: ${name}`);
     }
 
-    // Copy/update PostgreSQL configuration
-    await this.updatePostgresConfig(name, port);
+    // Check if container already exists
+    const containerName = getContainerName(name, port);
+    if (await isContainerRunning(containerName, this.config.containerRuntime)) {
+      throw new Error(`Container already running for branch: ${name}`);
+    }
 
-    // Start PostgreSQL instance
-    await this.startPostgresInstance(name, port);
+    // Start PostgreSQL container
+    await this.startPostgresContainer(name, port);
 
-    // Store port in branch properties
+    // Store port and container name in branch properties
     await runCommand("zfs", [
       "set",
       `zvpg:port=${port}`,
       branchDataset,
     ]);
+    await runCommand("zfs", [
+      "set",
+      `zvpg:container=${containerName}`,
+      branchDataset,
+    ]);
 
     log.success(
-      `PostgreSQL instance started for branch '${name}' on port ${port}`,
+      `PostgreSQL container started for branch '${name}' on port ${port}`,
     );
   }
 
@@ -441,17 +456,22 @@ export class BranchService {
       throw new Error(`Branch does not exist: ${name}`);
     }
 
-    // Stop PostgreSQL instance
-    await this.stopPostgresInstance(name);
+    // Stop PostgreSQL container
+    await this.stopPostgresContainer(name);
 
-    // Remove port from branch properties
+    // Remove port and container from branch properties
     await runCommand("zfs", [
       "inherit",
       "zvpg:port",
       branchDataset,
     ]);
+    await runCommand("zfs", [
+      "inherit",
+      "zvpg:container",
+      branchDataset,
+    ]);
 
-    log.success(`PostgreSQL instance stopped for branch '${name}'`);
+    log.success(`PostgreSQL container stopped for branch '${name}'`);
   }
 
   // 私有辅助方法
@@ -544,103 +564,124 @@ export class BranchService {
   }
 
   /**
-   * Update PostgreSQL configuration for a branch
+   * Start PostgreSQL container for a branch
    * @param branchName - Name of the branch
    * @param port - Port number
    */
-  private async updatePostgresConfig(
+  private async startPostgresContainer(
     branchName: string,
     port: number,
   ): Promise<void> {
     const branchMount = this.getBranchMount(branchName);
-    const configPath = `${branchMount}/postgresql.conf`;
+    const containerName = getContainerName(branchName, port);
+    const pgConfigDir = expandPath(this.config.pgConfigDir);
+    const pgConfPath = expandPath(this.config.pgConfPath);
+    const pgHbaPath = expandPath(this.config.pgHbaPath);
+    const pgIdentPath = expandPath(this.config.pgIdentPath);
 
-    // Update port in PostgreSQL configuration
-    await runCommand("sed", [
-      "-i",
-      `s/^#*port = .*/port = ${port}/`,
-      configPath,
-    ]);
+    // Ensure config directory exists
+    await this.ensureConfigDirectory(pgConfigDir);
 
-    // Update socket directory
-    const socketDir = `${this.config.mountDir}/${this.config.socketSubdir}`;
-    await runCommand("sed", [
-      "-i",
-      `s|^#*unix_socket_directories = .*|unix_socket_directories = '${socketDir}'|`,
-      configPath,
-    ]);
+    log.info(`Starting PostgreSQL container: ${containerName}`);
+
+    const containerArgs = [
+      "run",
+      "-d",
+      "--name",
+      containerName,
+      "-p",
+      `${port}:5432`,
+      "-v",
+      `${branchMount}:/var/lib/postgresql/data`,
+      "-v",
+      `${pgConfPath}:/etc/postgresql/postgresql.conf`,
+      "-v",
+      `${pgHbaPath}:/etc/postgresql/pg_hba.conf`,
+      "-v",
+      `${pgIdentPath}:/etc/postgresql/pg_ident.conf`,
+      "-e",
+      `POSTGRES_USER=${this.config.postgresUser}`,
+      "-e",
+      `POSTGRES_DB=${this.config.postgresDb}`,
+      "-e",
+      "POSTGRES_HOST_AUTH_METHOD=trust",
+      this.config.pgBaseImage,
+      "postgres",
+      "-c",
+      "config_file=/etc/postgresql/postgresql.conf",
+      "-c",
+      "hba_file=/etc/postgresql/pg_hba.conf",
+    ];
+
+    const result = await runCommand(
+      this.config.containerRuntime,
+      containerArgs,
+    );
+    if (!result.success) {
+      throw new Error(`Failed to start PostgreSQL container: ${result.stderr}`);
+    }
+
+    // Wait for PostgreSQL to be ready
+    await this.waitForPostgres(port);
   }
 
   /**
-   * Start PostgreSQL instance for a branch
+   * Stop PostgreSQL container for a branch
    * @param branchName - Name of the branch
-   * @param port - Port number
    */
-  private async startPostgresInstance(
-    branchName: string,
-    port: number,
-  ): Promise<void> {
-    const branchMount = this.getBranchMount(branchName);
-    const logFile = `${branchMount}/postgresql.log`;
+  private async stopPostgresContainer(branchName: string): Promise<void> {
+    const port = await this.getBranchPostgresPort(branchName);
+    if (!port) {
+      log.info(`No PostgreSQL container running for branch: ${branchName}`);
+      return;
+    }
 
-    await runCommand("sudo", [
-      "-u",
-      this.config.postgresUser,
-      "pg_ctl",
-      "start",
-      "-D",
-      branchMount,
-      "-l",
-      logFile,
-      "-o",
-      `-p ${port}`,
-    ]);
-
-    // Wait a moment for PostgreSQL to start
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    const containerName = getContainerName(branchName, port);
+    await stopContainer(containerName, this.config.containerRuntime);
   }
 
   /**
-   * Stop PostgreSQL instance for a branch
-   * @param branchName - Name of the branch
+   * Ensure PostgreSQL config directory exists
+   * @param configDir - Config directory path
    */
-  private async stopPostgresInstance(branchName: string): Promise<void> {
-    const branchMount = this.getBranchMount(branchName);
-
+  private async ensureConfigDirectory(configDir: string): Promise<void> {
     try {
-      await runCommand("sudo", [
-        "-u",
-        this.config.postgresUser,
-        "pg_ctl",
-        "stop",
-        "-D",
-        branchMount,
-        "-m",
-        "fast",
-      ]);
+      await Deno.mkdir(configDir, { recursive: true });
     } catch (error) {
-      const err = error as Error;
-      log.warn(`Failed to stop PostgreSQL instance gracefully: ${err.message}`);
-
-      // Try force stop
-      try {
-        await runCommand("sudo", [
-          "-u",
-          this.config.postgresUser,
-          "pg_ctl",
-          "stop",
-          "-D",
-          branchMount,
-          "-m",
-          "immediate",
-        ]);
-      } catch (forceError) {
-        const forceErr = forceError as Error;
-        log.warn(
-          `Failed to force stop PostgreSQL instance: ${forceErr.message}`,
-        );
+      if (!(error instanceof Deno.errors.AlreadyExists)) {
+        throw error;
       }
     }
+  }
+
+  /**
+   * Wait for PostgreSQL to be ready
+   * @param port - Port number
+   */
+  private async waitForPostgres(port: number): Promise<void> {
+    const maxRetries = 30;
+    const retryDelay = 1000; // 1 second
+
+    for (let i = 0; i < maxRetries; i++) {
+      const result = await runCommand("pg_isready", [
+        "-h",
+        "localhost",
+        "-p",
+        port.toString(),
+      ], {
+        stdout: "null",
+        stderr: "null",
+      });
+
+      if (result.success) {
+        log.info(`PostgreSQL is ready on port ${port}`);
+        return;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, retryDelay));
+    }
+
+    throw new Error(`PostgreSQL failed to start within ${maxRetries} seconds`);
   }
 
   /**
@@ -663,30 +704,19 @@ export class BranchService {
   }
 
   /**
-   * Check PostgreSQL instance status for a branch
-   * @param branchName - Name of the branch
+   * Check PostgreSQL container status for a branch
+   * @param containerName - Name of the container
    * @returns Status string
    */
   private async getBranchPostgresStatus(
-    branchName: string,
+    containerName: string,
   ): Promise<"running" | "stopped" | "unknown"> {
-    const branchMount = this.getBranchMount(branchName);
-
     try {
-      const result = await runCommand("sudo", [
-        "-u",
-        this.config.postgresUser,
-        "pg_ctl",
-        "status",
-        "-D",
-        branchMount,
-      ]);
-
-      if (result.success && result.stdout?.includes("server is running")) {
-        return "running";
-      } else {
-        return "stopped";
-      }
+      const isRunning = await isContainerRunning(
+        containerName,
+        this.config.containerRuntime,
+      );
+      return isRunning ? "running" : "stopped";
     } catch {
       return "unknown";
     }

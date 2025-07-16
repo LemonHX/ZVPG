@@ -82,7 +82,7 @@ export async function checkCommand(command: string): Promise<boolean> {
 
 export function validateBranchName(name: string): boolean {
   const config = getConfig();
-  const pattern = new RegExp(config.branchNamingPattern);
+  const pattern = new RegExp(config.branchNamingPattern, "u");
   return pattern.test(name);
 }
 
@@ -93,7 +93,7 @@ export function validateSnapshotName(name: string): boolean {
 
 export function validatePort(port: number): boolean {
   const config = getConfig();
-  return port >= config.clonePortStart && port <= config.clonePortEnd;
+  return port >= config.branchPortStart && port <= config.branchPortEnd;
 }
 
 export async function pickValidPort(
@@ -108,7 +108,7 @@ export async function pickValidPort(
     throw new Error(`Port ${port} is already in use`);
   }
 
-  for (let p = config.clonePortStart; p <= config.clonePortEnd; p++) {
+  for (let p = config.branchPortStart; p <= config.branchPortEnd; p++) {
     const inUse = await isPortInUse(p);
     if (!inUse) {
       return p;
@@ -116,7 +116,7 @@ export async function pickValidPort(
   }
 
   throw new Error(
-    `No available ports in range ${config.clonePortStart}-${config.clonePortEnd}`,
+    `No available ports in range ${config.branchPortStart}-${config.branchPortEnd}`,
   );
 }
 
@@ -167,7 +167,11 @@ export async function getLatestSnapshot(): Promise<string | null> {
 export async function getNextPort(): Promise<number> {
   const config = getConfig();
 
-  for (let port = config.clonePortStart; port <= config.clonePortEnd; port++) {
+  for (
+    let port = config.branchPortStart;
+    port <= config.branchPortEnd;
+    port++
+  ) {
     const isInUse = await isPortInUse(port);
     if (!isInUse) {
       return port;
@@ -175,7 +179,7 @@ export async function getNextPort(): Promise<number> {
   }
 
   throw new Error(
-    `No available ports in range ${config.clonePortStart}-${config.clonePortEnd}`,
+    `No available ports in range ${config.branchPortStart}-${config.branchPortEnd}`,
   );
 }
 
@@ -207,4 +211,48 @@ export function getBranchDataset(branchName: string): string {
 export function getBranchMount(branchName: string): string {
   const config = getConfig();
   return `${config.mountDir}/${config.zfsPool}/branches/${branchName}`;
+}
+
+export function expandPath(path: string): string {
+  if (path.startsWith("~/")) {
+    const homeDir = Deno.env.get("HOME") || "/root";
+    return path.replace("~", homeDir);
+  }
+  return path;
+}
+
+export function getContainerName(branchName: string, port: number): string {
+  return `zvpg_${branchName}_${port}`;
+}
+
+export async function checkContainerRuntime(runtime: string): Promise<boolean> {
+  return await checkCommand(runtime);
+}
+
+export async function isContainerRunning(
+  containerName: string,
+  runtime: string,
+): Promise<boolean> {
+  const result = await runCommand(runtime, [
+    "ps",
+    "-q",
+    "-f",
+    `name=${containerName}`,
+  ], {
+    stdout: "piped",
+    stderr: "null",
+  });
+  return result.success && result.stdout?.trim() !== "";
+}
+
+export async function stopContainer(
+  containerName: string,
+  runtime: string,
+): Promise<void> {
+  const isRunning = await isContainerRunning(containerName, runtime);
+  if (isRunning) {
+    log.info(`Stopping container: ${containerName}`);
+    await runCommand(runtime, ["stop", containerName]);
+    await runCommand(runtime, ["rm", containerName]);
+  }
 }

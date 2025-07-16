@@ -41,7 +41,7 @@ const createBranchCommand = new Command()
         );
 
         log.success(`Branch '${name}' created successfully`);
-        log.info(`PostgreSQL instance started on port ${selectedPort}`);
+        log.info(`PostgreSQL container started on port ${selectedPort}`);
       } catch (error) {
         log.error(error instanceof Error ? error.message : String(error));
         Deno.exit(1);
@@ -97,6 +97,7 @@ const listBranchesCommand = new Command()
             "Parent Snapshot",
             "Used",
             "Created",
+            "Container",
           ])
           .body(
             branches.map((branch) => [
@@ -105,6 +106,7 @@ const listBranchesCommand = new Command()
               branch.parentSnapshot.split("@")[1] || branch.parentSnapshot,
               branch.used,
               branch.created,
+              branch.containerName || "Not running",
             ]),
           );
 
@@ -141,6 +143,7 @@ const branchInfoCommand = new Command()
           ["Compression Ratio", info.compressratio],
           ["Created", info.created],
           ["PostgreSQL Port", info.port ? info.port.toString() : "Not running"],
+          ["Container Name", info.containerName || "Not running"],
           ["PostgreSQL Status", info.pgStatus || "Not running"],
           ["Clones", info.clones.length > 0 ? info.clones.join(", ") : "None"],
         ]);
@@ -153,11 +156,11 @@ const branchInfoCommand = new Command()
   });
 
 const startPostgresCommand = new Command()
-  .description("Start PostgreSQL instance for a branch")
+  .description("Start PostgreSQL container for a branch")
   .arguments("<name:string>")
   .option(
     "-p, --port <port:number>",
-    "Specific port for PostgreSQL instance (optional)",
+    "Specific port for PostgreSQL container (optional)",
   )
   .option("-c, --config <config>", "Configuration file path")
   .action(
@@ -174,7 +177,7 @@ const startPostgresCommand = new Command()
 
         await branchService.startBranchPostgres(name, selectedPort);
         log.success(
-          `PostgreSQL instance started for branch '${name}' on port ${selectedPort}`,
+          `PostgreSQL container started for branch '${name}' on port ${selectedPort}`,
         );
       } catch (error) {
         log.error(error instanceof Error ? error.message : String(error));
@@ -184,7 +187,7 @@ const startPostgresCommand = new Command()
   );
 
 const stopPostgresCommand = new Command()
-  .description("Stop PostgreSQL instance for a branch")
+  .description("Stop PostgreSQL container for a branch")
   .arguments("<name:string>")
   .option("-c, --config <config>", "Configuration file path")
   .action(
@@ -197,7 +200,7 @@ const stopPostgresCommand = new Command()
 
       try {
         await branchService.stopBranchPostgres(name);
-        log.success(`PostgreSQL instance stopped for branch '${name}'`);
+        log.success(`PostgreSQL container stopped for branch '${name}'`);
       } catch (error) {
         log.error(error instanceof Error ? error.message : String(error));
         Deno.exit(1);
