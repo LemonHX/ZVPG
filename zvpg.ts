@@ -13,13 +13,12 @@ const logo = await Deno.readTextFile(
   new URL("logo_output.txt", import.meta.url),
 );
 
-console.log("\n\n" + logo);
-
 const cli = new Command()
   .name("zvpg")
   .version(version)
   .description("ZFS Verioned PostgreSQL Engine - PostgreSQL Branch Management")
   .action(function () {
+    console.log("\n\n" + logo);
     this.showHelp();
   })
   .command("init", initCommand)
